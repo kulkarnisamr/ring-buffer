@@ -8,12 +8,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.abhg.dev/container/ring"
 )
 
 const (
-	defaultBufferSize = 1024 * 1024
-	occurrencesFile   = "occurrences_10gb.txt"
-	wordCountFile     = "word_count_10gb.txt"
+	defaultBufferSize   = 1024 * 1024
+	occurrencesFileName = "occurrences_1gb.txt"
+	wordCountFileName   = "word_count_1gb.txt"
 )
 
 // RingBuffer represents a ring buffer
@@ -39,16 +41,13 @@ type LogEntry struct {
 
 // LogProcessor represents a concurrent log processor
 type LogProcessor struct {
-	mu                sync.Mutex
-	buffer            *RingBuffer
+	mu sync.Mutex
+	//buffer            *RingBuffer
+	buffer            *ring.MuQ[*LogEntry]
 	occurrenceCounter map[string]int64
 	wordCounter       map[int64]int64
 	wordCounterFile   *os.File
 	occurrenceFile    *os.File
-}
-
-func (l *LogEntry) identifierWithNumberOfWords() string {
-	return fmt.Sprintf("%v %v\n", l.entryIndex, len(strings.Fields(string(l.data))))
 }
 
 func main() {
@@ -58,22 +57,23 @@ func main() {
 	numCPU := runtime.NumCPU()
 	runtime.GOMAXPROCS(numCPU)
 
-	wordCountFile, err := os.OpenFile(wordCountFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	wordCountFile, err := os.OpenFile(wordCountFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		panic(err)
 	}
 
 	defer wordCountFile.Close()
 
-	out, err := os.Create(occurrencesFile)
+	occurrencesFile, err := os.Create(occurrencesFileName)
 	if err != nil {
 		panic("could not create file")
 	}
-	defer out.Close()
+	defer occurrencesFile.Close()
 
 	// Initialize the log processor
 	logProcessor := LogProcessor{
-		buffer: NewRingBuffer(4096),
+		buffer: ring.NewMuQ[*LogEntry](4096),
+		//NewRingBuffer(4096),
 		//&RingBuffer{buffer: make([]*LogEntry, 0, 4096), capacity: 4096, size: 0},
 		occurrenceCounter: make(map[string]int64),
 		wordCounter:       make(map[int64]int64),
@@ -109,10 +109,11 @@ func main() {
 	// Wait for all goroutines to finish
 	<-done
 
+	logProcessor.mu.Lock()
 	// Write the unique words and their occurrences
 	for word, count := range logProcessor.occurrenceCounter {
 		str := fmt.Sprintf("%s %d\n", word, count)
-		_, err := out.WriteString(str)
+		_, err := occurrencesFile.WriteString(str)
 		if err != nil {
 			panic(err)
 		}
@@ -120,9 +121,10 @@ func main() {
 
 	// Flush the word counts one last time
 	if len(logProcessor.wordCounter) > 0 {
+		fmt.Printf("flushing again\n")
 		logProcessor.flushOccurrenceCounts(wordCountFile)
 	}
-
+	logProcessor.mu.Unlock()
 	endTime := time.Now().UTC().Sub(startTime)
 	fmt.Printf("total time taken: %v\n", endTime.Seconds())
 }
@@ -141,10 +143,11 @@ func (l *LogProcessor) readLogFile(filename string, logLines chan<- struct{}) {
 	for scanner.Scan() {
 		lineCount++
 		line := scanner.Text()
-		l.buffer.enqueue(&LogEntry{
+		entry := &LogEntry{
 			data:       []byte(line),
 			entryIndex: lineCount,
-		})
+		}
+		l.buffer.Push(entry)
 		logLines <- struct{}{} // Send the signal to the processing goroutines
 	}
 
@@ -155,21 +158,21 @@ func (l *LogProcessor) readLogFile(filename string, logLines chan<- struct{}) {
 
 func (l *LogProcessor) processLogLines(logLines chan struct{}, wg *sync.WaitGroup, wordCounterFile *os.File) {
 	defer wg.Done()
-
 	for range logLines {
-		l.buffer.writeLock.Lock()
-		node := l.buffer.dequeue()
-		words := strings.Fields(string(node.data))
 		l.mu.Lock()
-		for _, word := range words {
-			l.occurrenceCounter[strings.ToLower(word)]++
+		line, ok := l.buffer.TryPop()
+		if ok {
+			words := strings.Fields(string(line.data))
+
+			for _, word := range words {
+				l.occurrenceCounter[strings.ToLower(word)]++
+			}
+			l.wordCounter[line.entryIndex] = int64(len(words))
+			if l.buffer.Len() == 4096 {
+				l.flushOccurrenceCounts(wordCounterFile)
+			}
+			l.mu.Unlock()
 		}
-		l.wordCounter[node.entryIndex] = int64(len(words))
-		if l.buffer.isFull() {
-			l.flushOccurrenceCounts(wordCounterFile)
-		}
-		l.mu.Unlock()
-		l.buffer.writeLock.Unlock()
 	}
 }
 
@@ -180,9 +183,10 @@ func (l *LogProcessor) flushOccurrenceCounts(file *os.File) {
 	for k, v := range l.wordCounter {
 		_, err := w.WriteString(fmt.Sprintf("%d %d\n", k, v))
 		if err != nil {
-			return
+			fmt.Printf("error flushing counts: %v\n", err.Error())
 		}
 	}
+	w.Flush()
 
 	l.wordCounter = make(map[int64]int64)
 }
