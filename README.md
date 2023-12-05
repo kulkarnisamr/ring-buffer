@@ -3,7 +3,7 @@ A simple implementation of ring buffer to read a large log file and process it. 
 1. occurrences.txt - unique word and the number of occurrences in the log file
 2. word_count.txt - line number and the number of words that line had in the log file (this file is in `APPEND` mode, so delete it if you run the program again)
 
-Total time taken is printed in seconds
+Note: Total time taken is printed in seconds
 
 # How to run
 There are two ways to run the program. Both take the inputfile as an argument from the user:
