@@ -15,8 +15,8 @@ import (
 
 const (
 	defaultBufferSize   = 1024 * 1024
-	occurrencesFileName = "occurrences1.txt"
-	wordCountFileName   = "word_count1.txt"
+	occurrencesFileName = "occurrences.txt"
+	wordCountFileName   = "word_count.txt"
 )
 
 // RingBuffer represents a ring buffer
