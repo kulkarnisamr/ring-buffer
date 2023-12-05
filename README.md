@@ -50,6 +50,9 @@ ok  	github.com/kulkarnisamr/ring-buffer	12.976s
 ```
 
 # Performance
+### Go version
+`go 1.20.5`
+
 ### Runtime
 ```
 Hardware Overview:
