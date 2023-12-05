@@ -14,7 +14,7 @@ OR
 go run ./ring_buffer.go inputfile
 ```
 ### Enable profiling
-If you want to check the cpu profile afterwards using `pprof` tool, add the cpuprofile flag when you run the program. for e.g.
+If you want to check the cpu profile afterwards using `pprof` tool, add the cpuprofile flag when you run the program (this will make the run very slow). for e.g.
 ```
 ./ring_buffer -input=inputfile -cpuprofile=cpu.prof
 ```
