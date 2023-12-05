@@ -15,8 +15,8 @@ import (
 
 const (
 	defaultBufferSize   = 1024 * 1024
-	occurrencesFileName = "occurrences.txt"
-	wordCountFileName   = "word_count.txt"
+	occurrencesFileName = "occurrences1.txt"
+	wordCountFileName   = "word_count1.txt"
 )
 
 // RingBuffer represents a ring buffer
@@ -46,7 +46,7 @@ type LogProcessor struct {
 }
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
-var inputfile = flag.String("input", "", "input log file to analyze")
+var inputFile = flag.String("input", "", "input log file to analyze")
 
 func main() {
 	flag.Parse()
@@ -60,8 +60,8 @@ func main() {
 	}
 
 	var logFile string
-	if *inputfile != "" {
-		logFile = *inputfile
+	if *inputFile != "" {
+		logFile = *inputFile
 	} else {
 		log.Fatal("input file not specified")
 	}
