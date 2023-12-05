@@ -11,7 +11,7 @@ make build
 ```
 OR
 ```
-go run ./ring_buffer.go inputfile
+go run ./ring_buffer.go -input=inputfile
 ```
 ### Enable profiling
 If you want to check the cpu profile afterwards using `pprof` tool, add the cpuprofile flag when you run the program (this will make the run very slow). for e.g.
@@ -69,6 +69,10 @@ Hardware Overview:
 ### Complexity
 1. Time - enqueue and dequeue operations on the ring buffer are `O(1)`. I am not sorting the output for the line number and word counts file which is 3.5GB in size and that would significantly add to the overall compute time (complexity `O(N^logN)`).
 2. Space - `O(n)` where n is the ring buffer size
+
+### CPU profile
+Profile for processing a 1GB file: ![profile001](https://github.com/kulkarnisamr/ring-buffer/assets/3310957/30473dd0-e014-48f4-9335-378bccb82f16)
+
 
 
 # Approach
