@@ -68,8 +68,9 @@ Hardware Overview:
   Hyper-Threading Technology:	Enabled
   Memory:	32 GB
 ```
-1. 1GB file: total time taken `66s`
-2. 10GB file: total time taken `675s`
+1. 1GB file: total time taken `70s`
+2. 10GB file: total time taken `700s`
+3. 20GB file: total time taken `1449s`
 
 ### Complexity
 1. Time - enqueue and dequeue operations on the ring buffer are `O(1)`. I am not sorting the output for the line number and word counts file which is 3.5GB in size and that would significantly add to the overall compute time (complexity `O(N^logN)`).
