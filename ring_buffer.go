@@ -2,30 +2,28 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
+	"log"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	defaultBufferSize = 1024 * 1024
-	occurrencesFile   = "occurrences_10gb.txt"
-	wordCountFile     = "word_count_10gb.txt"
+	defaultBufferSize   = 1024 * 1024
+	occurrencesFileName = "occurrences1.txt"
+	wordCountFileName   = "word_count1.txt"
 )
 
 // RingBuffer represents a ring buffer
 type RingBuffer struct {
-	buffer   []*LogEntry
-	capacity int
-	size     int
-	// readOffset and writeOffset are not used in this implementation to their
-	// fullest effect
-	// since we want to update in-memory maps and that code cannot be
-	// idempotent especially with counting words, however with a persistent
-	// store, we can use these offsets and have logic that is idempotent
+	buffer      []*LogEntry
+	capacity    int
+	size        int
 	readOffset  int
 	writeOffset int
 	writeLock   sync.Mutex
@@ -47,34 +45,50 @@ type LogProcessor struct {
 	occurrenceFile    *os.File
 }
 
-func (l *LogEntry) identifierWithNumberOfWords() string {
-	return fmt.Sprintf("%v %v\n", l.entryIndex, len(strings.Fields(string(l.data))))
-}
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+var inputFile = flag.String("input", "", "input log file to analyze")
 
 func main() {
+	flag.Parse()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
+	var logFile string
+	if *inputFile != "" {
+		logFile = *inputFile
+	} else {
+		log.Fatal("input file not specified")
+	}
+
 	startTime := time.Now().UTC()
 
 	// Set the number of available CPU cores
+	// Performance will improve if there are more CPU cores
 	numCPU := runtime.NumCPU()
 	runtime.GOMAXPROCS(numCPU)
 
-	wordCountFile, err := os.OpenFile(wordCountFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
+	wordCountFile, err := os.OpenFile(wordCountFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
 		panic(err)
 	}
 
 	defer wordCountFile.Close()
 
-	out, err := os.Create(occurrencesFile)
+	occurrencesFile, err := os.Create(occurrencesFileName)
 	if err != nil {
 		panic("could not create file")
 	}
-	defer out.Close()
+	defer occurrencesFile.Close()
 
 	// Initialize the log processor
 	logProcessor := LogProcessor{
-		buffer: NewRingBuffer(4096),
-		//&RingBuffer{buffer: make([]*LogEntry, 0, 4096), capacity: 4096, size: 0},
+		buffer:            NewRingBuffer(4096),
 		occurrenceCounter: make(map[string]int64),
 		wordCounter:       make(map[int64]int64),
 	}
@@ -83,7 +97,7 @@ func main() {
 	done := make(chan struct{})
 
 	// Channel to send log lines to processing goroutines
-	logLines := make(chan struct{}, 4096)
+	logReadSignal := make(chan struct{}, 4096)
 
 	// Wait group to wait for all goroutines to finish
 	var wg sync.WaitGroup
@@ -91,13 +105,13 @@ func main() {
 	// Start the log processing goroutines
 	for i := 0; i < numCPU; i++ {
 		wg.Add(1)
-		go logProcessor.processLogLines(logLines, &wg, wordCountFile)
+		go logProcessor.processLogLines(logReadSignal, &wg, wordCountFile)
 	}
 
 	// Start a goroutine to read the log file and send lines to the processing goroutines
 	go func() {
-		logProcessor.readLogFile(os.Args[1], logLines)
-		close(logLines) // Close the channel when done reading the log file
+		logProcessor.readLogFile(logFile, logReadSignal)
+		close(logReadSignal) // Close the channel when done reading the log file
 	}()
 
 	// Start a goroutine to wait for all processing goroutines to finish
@@ -112,7 +126,7 @@ func main() {
 	// Write the unique words and their occurrences
 	for word, count := range logProcessor.occurrenceCounter {
 		str := fmt.Sprintf("%s %d\n", word, count)
-		_, err := out.WriteString(str)
+		_, err := occurrencesFile.WriteString(str)
 		if err != nil {
 			panic(err)
 		}
@@ -127,7 +141,7 @@ func main() {
 	fmt.Printf("total time taken: %v\n", endTime.Seconds())
 }
 
-func (l *LogProcessor) readLogFile(filename string, logLines chan<- struct{}) {
+func (l *LogProcessor) readLogFile(filename string, logReadSignal chan<- struct{}) {
 	file, err := os.Open(filename)
 	if err != nil {
 		fmt.Println("Error opening file:", err)
@@ -145,7 +159,7 @@ func (l *LogProcessor) readLogFile(filename string, logLines chan<- struct{}) {
 			data:       []byte(line),
 			entryIndex: lineCount,
 		})
-		logLines <- struct{}{} // Send the signal to the processing goroutines
+		logReadSignal <- struct{}{} // Send the signal to the processing goroutines
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -153,10 +167,10 @@ func (l *LogProcessor) readLogFile(filename string, logLines chan<- struct{}) {
 	}
 }
 
-func (l *LogProcessor) processLogLines(logLines chan struct{}, wg *sync.WaitGroup, wordCounterFile *os.File) {
+func (l *LogProcessor) processLogLines(logReadSignal chan struct{}, wg *sync.WaitGroup, wordCounterFile *os.File) {
 	defer wg.Done()
 
-	for range logLines {
+	for range logReadSignal {
 		l.buffer.writeLock.Lock()
 		node := l.buffer.dequeue()
 		words := strings.Fields(string(node.data))
@@ -173,7 +187,6 @@ func (l *LogProcessor) processLogLines(logLines chan struct{}, wg *sync.WaitGrou
 	}
 }
 
-// RingBuffer methods
 func (l *LogProcessor) flushOccurrenceCounts(file *os.File) {
 	w := bufio.NewWriterSize(file, defaultBufferSize)
 
@@ -186,6 +199,8 @@ func (l *LogProcessor) flushOccurrenceCounts(file *os.File) {
 
 	l.wordCounter = make(map[int64]int64)
 }
+
+// RingBuffer methods
 
 func NewRingBuffer(capacity int) *RingBuffer {
 	return &RingBuffer{
