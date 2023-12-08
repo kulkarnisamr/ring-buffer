@@ -197,6 +197,8 @@ func (l *LogProcessor) flushOccurrenceCounts(file *os.File) {
 		}
 	}
 
+	w.Flush()
+
 	l.wordCounter = make(map[int64]int64)
 }
 
